@@ -5,6 +5,7 @@ from PIL import Image
 import torch
 import numpy as np
 import cv2
+import pandas as pd
 
 # MODIFIED: Add all necessary imports
 from torchvision import transforms
@@ -78,7 +79,7 @@ def generate_grad_cam(image_pil, model, model_type, pred_idx):
 def get_gemini_explanation(api_key, image_path, final_prediction):
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-pro-vision')
+        model = genai.GenerativeModel('models/gemini-pro-vision')
         img = Image.open(image_path)
         prompt = f"""
         You are an AI assistant analyzing the output of a Parkinson's detection model.
@@ -102,6 +103,24 @@ with st.sidebar:
     st.title("Upload Drawings")
     spiral_image_file = st.file_uploader("Upload a Spiral Image", type=["png", "jpg", "jpeg"], key="spiral")
     wave_image_file = st.file_uploader("Upload a Wave Image", type=["png", "jpg", "jpeg"], key="wave")
+
+if st.sidebar.checkbox("Show Debug Information"):
+    st.sidebar.subheader("Available Gemini Models")
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        models_list = []
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                models_list.append({'Model Name': m.name, 'Description': m.description})
+        
+        if models_list:
+            df = pd.DataFrame(models_list)
+            st.sidebar.dataframe(df)
+        else:
+            st.sidebar.error("Could not retrieve any models.")
+            
+    except Exception as e:
+        st.sidebar.error(f"An error occurred while listing models: {e}")
 
 if st.button("Analyze Drawings", use_container_width=True):
     if spiral_image_file and wave_image_file:

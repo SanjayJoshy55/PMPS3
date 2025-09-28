@@ -9,3 +9,4 @@ Pillow
 grad-cam
 matplotlib
 google-generativeai
+pandas
