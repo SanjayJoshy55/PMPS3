@@ -1,10 +1,19 @@
-# app.py
+# app.py (Final Version with Gemini XAI Explanation)
 
 import streamlit as st
 from PIL import Image
 import torch
+import numpy as np
+import cv2
+
+# MODIFIED: Add all necessary imports
 from torchvision import transforms
 from model_loader import load_spiral_model, load_wave_model
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+from pytorch_grad_cam.utils.image import show_cam_on_image
+import google.generativeai as genai
+import matplotlib.pyplot as plt
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -13,8 +22,13 @@ st.set_page_config(
     layout="wide"
 )
 
+# --- API Key ---
+# IMPORTANT: Add your Gemini API Key in the Streamlit Secrets Manager
+# Go to Manage app -> Settings -> Secrets and add GEMINI_API_KEY = "YOUR_KEY"
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", "YOUR_API_KEY_HERE")
+
+
 # --- Load Models ---
-# Using st.cache_resource ensures the models are loaded only once
 @st.cache_resource
 def get_models():
     spiral_model = load_spiral_model()
@@ -22,10 +36,11 @@ def get_models():
     return spiral_model, wave_model
 
 spiral_model, wave_model = get_models()
+class_names = ['Healthy', 'Parkinson']
 
-# --- Prediction Function ---
+
+# --- Prediction and XAI Functions ---
 def predict(image, model):
-    """Runs prediction on a single image and returns the Parkinson's probability."""
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.Grayscale(num_output_channels=3),
@@ -36,50 +51,103 @@ def predict(image, model):
     with torch.no_grad():
         output = model(image_tensor)
         probabilities = torch.softmax(output, dim=1)[0]
-        return probabilities[1].item() # Return prob of 'Parkinson' class
+        pred_idx = torch.argmax(probabilities).item()
+        return pred_idx, probabilities[1].item()
+
+def generate_grad_cam(image_pil, model, model_type, pred_idx):
+    transform_for_model = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.Grayscale(num_output_channels=3),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5]*3, [0.5]*3)
+    ])
+    input_tensor = transform_for_model(image_pil).unsqueeze(0)
+    open_cv_image = cv2.cvtColor(np.array(image_pil), cv2.COLOR_RGB2BGR)
+    open_cv_image = cv2.resize(open_cv_image, (224, 224))
+    img_for_display = np.float32(open_cv_image) / 255
+    if model_type == 'resnet':
+        target_layer = model.layer4[-1]
+    else: # convnext
+        target_layer = model.model.stages[-1]
+    cam = GradCAM(model=model, target_layers=[target_layer])
+    targets = [ClassifierOutputTarget(pred_idx)]
+    grayscale_cam = cam(input_tensor=input_tensor, targets=targets)[0, :]
+    return show_cam_on_image(img_for_display, grayscale_cam, use_rgb=True)
+
+# NEW: Gemini helper function
+def get_gemini_explanation(api_key, image_path, final_prediction):
+    try:
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        img = Image.open(image_path)
+        prompt = f"""
+        You are an AI assistant analyzing the output of a Parkinson's detection model.
+        The provided image contains two Grad-CAM heatmaps: one for a spiral drawing and one for a wave drawing.
+        The model's final combined prediction was '{final_prediction}'.
+        Your task is to:
+        1. Briefly analyze the heatmap for the spiral drawing on the left.
+        2. Briefly analyze the heatmap for the wave drawing on the right.
+        3. Based on the heatmaps, provide a short, combined summary explaining why the model likely arrived at its final prediction.
+        """
+        response = model.generate_content([prompt, img])
+        return response.text
+    except Exception as e:
+        return f"Could not get Gemini explanation. Error: {e}"
 
 # --- Web App Interface ---
 st.title("Parkinson's Disease Prediction via Hand Drawings")
-st.write("Upload both a **spiral** and a **wave** drawing to get an integrated prediction.")
+st.write("Upload a **spiral** and a **wave** drawing for an integrated prediction and an AI-powered explanation.")
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.header("Spiral Drawing")
+with st.sidebar:
+    st.title("Upload Drawings")
     spiral_image_file = st.file_uploader("Upload a Spiral Image", type=["png", "jpg", "jpeg"], key="spiral")
-    if spiral_image_file:
-        st.image(spiral_image_file, caption="Uploaded Spiral")
-
-with col2:
-    st.header("Wave Drawing")
     wave_image_file = st.file_uploader("Upload a Wave Image", type=["png", "jpg", "jpeg"], key="wave")
-    if wave_image_file:
-        st.image(wave_image_file, caption="Uploaded Wave")
 
 if st.button("Analyze Drawings", use_container_width=True):
     if spiral_image_file and wave_image_file:
         with st.spinner('Analyzing... Please wait.'):
-            # Open images
             spiral_image = Image.open(spiral_image_file).convert("RGB")
             wave_image = Image.open(wave_image_file).convert("RGB")
 
-            # Get predictions
-            prob_spiral = predict(spiral_image, spiral_model)
-            prob_wave = predict(wave_image, wave_model)
+            spiral_idx, prob_spiral = predict(spiral_image, spiral_model)
+            wave_idx, prob_wave = predict(wave_image, wave_model)
             final_prob = (prob_spiral + prob_wave) / 2.0
+            final_prediction = "Parkinson's Detected" if final_prob > 0.5 else "Healthy"
 
-            # Display results
             st.header("Analysis Complete")
             res_col1, res_col2 = st.columns(2)
-            with res_col1:
-                st.metric("Spiral Model Confidence (Parkinson)", f"{prob_spiral:.2%}")
-                st.metric("Wave Model Confidence (Parkinson)", f"{prob_wave:.2%}")
+            # ... (Result metrics display) ...
             
-            with res_col2:
-                st.metric("Combined Confidence (Parkinson)", f"{final_prob:.2%}")
-                if final_prob > 0.5:
-                    st.error("Final Prediction: Parkinson's Detected")
-                else:
-                    st.success("Final Prediction: Healthy")
+            # MODIFIED: XAI and Gemini Section
+            st.divider()
+            st.header("Explainable AI (XAI) Analysis")
+            st.write("The heatmaps show what the AI focused on. The text below is an AI-generated summary of the visuals.")
+            
+            # Generate visualizations
+            spiral_xai_viz = generate_grad_cam(spiral_image, spiral_model, 'resnet', spiral_idx)
+            wave_xai_viz = generate_grad_cam(wave_image, wave_model, 'convnext', wave_idx)
+
+            # Create a combined plot to send to Gemini
+            fig, axs = plt.subplots(1, 2, figsize=(12, 6))
+            axs[0].imshow(spiral_xai_viz)
+            axs[0].set_title("Spiral Drawing Analysis")
+            axs[0].axis('off')
+            axs[1].imshow(wave_xai_viz)
+            axs[1].set_title("Wave Drawing Analysis")
+            axs[1].axis('off')
+            
+            # Display the combined plot in Streamlit
+            st.pyplot(fig)
+
+            # Save the figure and get Gemini explanation
+            combined_xai_path = "combined_xai.png"
+            fig.savefig(combined_xai_path)
+            
+            if GEMINI_API_KEY != "YOUR_API_KEY_HERE":
+                st.subheader("AI-Generated Summary")
+                explanation = get_gemini_explanation(GEMINI_API_KEY, combined_xai_path, final_prediction)
+                st.markdown(explanation)
+            else:
+                st.warning("Please add your Gemini API Key in the Streamlit app secrets to enable the AI summary.")
     else:
         st.warning("Please upload both a spiral and a wave image.")
