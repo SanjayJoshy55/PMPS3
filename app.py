@@ -78,7 +78,7 @@ def generate_grad_cam(image_pil, model, model_type, pred_idx):
 def get_gemini_explanation(api_key, image_path, final_prediction):
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel('gemini-1.5-flash-latest')
+        model = genai.GenerativeModel('gemini-1.5-flash')
         img = Image.open(image_path)
         prompt = f"""
         You are an AI assistant analyzing the output of a Parkinson's detection model.
