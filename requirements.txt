@@ -7,5 +7,5 @@ numpy
 opencv-python-headless
 Pillow
 grad-cam
-opencv-python-headless
+matplotlib
 google-generativeai
