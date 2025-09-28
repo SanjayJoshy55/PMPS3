@@ -111,10 +111,10 @@ if st.button("Analyze Drawings", use_container_width=True):
             xai_col1, xai_col2 = st.columns(2)
             with xai_col1:
                 spiral_xai_viz = generate_grad_cam(spiral_image, spiral_model, 'resnet', spiral_idx)
-                st.image(spiral_xai_viz, caption="Spiral Drawing Analysis", use_column_width=True)
+                st.image(spiral_xai_viz, caption="Spiral Drawing Analysis", use_container_width=True)
 
             with xai_col2:
                 wave_xai_viz = generate_grad_cam(wave_image, wave_model, 'convnext', wave_idx)
-                st.image(wave_xai_viz, caption="Wave Drawing Analysis", use_column_width=True)
+                st.image(wave_xai_viz, caption="Wave Drawing Analysis", use_container_width=True)
     else:
         st.warning("Please upload both a spiral and a wave image.")
