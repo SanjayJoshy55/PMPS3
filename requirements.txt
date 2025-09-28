@@ -6,3 +6,6 @@ scikit-learn
 numpy
 opencv-python-headless
 Pillow
+grad-cam
+opencv-python-headless
+google-generativeai
